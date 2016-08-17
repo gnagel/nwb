@@ -1,10 +1,24 @@
+**Breaking Changes:**
+
+- **Upgraded from Webpack 1 to Webpack 2** [[#110](https://github.com/insin/nwb/issues/110)]
+
+  Webpack 2 is strict about what appears in its configuration object. If you're using [`webpack.extra` config](https://github.com/insin/nwb/blob/master/docs/Configuration.md#extra-object), it **must** conform to [Webpack 2's configuration format](https://webpack.js.org/configuration/) or your build will fail with a validation error.
+
+  Some Webpack 1 loaders relied on using custom top-level properties in the Webpack configuration object for their configuration, but this is now disallowed by Webpack 2. If you need access to Webpack 2's [`LoaderOptionsPlugin`](https://webpack.js.org/plugins/loader-options-plugin) stop-gap configuration measure, [export a function from your configuration file](https://github.com/insin/nwb/blob/master/docs/Configuration.md#configuration-file), which will give you access to nwb's version of the `webpack` module.
+
+  `postcss-loader` can now only be configured with a custom list of PostCSS plugins for your app's own stylesheets. Stylesheets imported from `node_modules/` will only have the default Autoprefixer plugin applied (with your preferred [`webpack.autoPrefixer` options](https://github.com/insin/nwb/blob/master/docs/Configuration.md#autoprefixer-string--object) if configured). This will be revisited as [`ExtractTextPlugin`](https://github.com/webpack/extract-text-webpack-plugin) catches up with new Webpack 2 features.
+
+  Webpack 2's minimum supported Node.js version is now **4.3**, so nwb's minimum supported version has been bumped up from **4.2** to match it.
+
 **`nwb.config.js` Config Format Changes:**
 
-> For deprecations, nwb v0.15 will support the old format, display warning messages about the changes required, and adapt the old format for use in the current build where possible.
+> For deprecations, nwb will continue to support the old format for the next couple of releases, displaying warning messages about the changes required and adapting deprecated config for use in the current version where possible.
+>
+> If you have an `nwb.config.js` file, run [`nwb check-config`](https://github.com/insin/nwb/blob/master/docs/Commands.md#check-config-command) after updating nwb to find out if there's anything you need to change.
 
 - Deprecated `karma.testDirs`, renaming this config to `karma.excludeFromCoverage`, as it can be configured to exclude any paths from code coverage, not just directories [[#236](https://github.com/insin/nwb/issues/236)]
 
-  ```
+  ```js
   // < v0.15                         // v0.15
   module.exports = {                 module.exports = {
     karma: {                           karma: {
@@ -14,6 +28,69 @@
       ]                                  ]
     }                                  }
   }                                  }
+  ```
+
+- Deprecated `webpack.loaders`, renaming this config to `webpack.rules` to match Webpack 2's new config format:
+
+  ```js
+  // < v0.15              // v0.15
+  module.exports = {      module.exports = {
+    webpack: {              webpack: {
+      loaders: {      =>      rules: {
+        /* ... */               /* ... */
+      }                       }
+    }                       }
+  }                       }
+  ```
+
+- Deprecated use of a  `query` property to configure Webpack rule options as a separate object - an `options` property should now be used as per Webpack 2's new config format:
+
+  ```js
+  // < v0.15                        // v0.15
+  module.exports = {                module.exports = {
+    webpack: {                        webpack: {
+      loaders: {                        rules: {
+        css: {                            css: {
+          query: {              =>          options: {
+            modules: /* ... */                modules: /* ... */
+          }                                 }
+        }                                 }
+      }                                 }
+    }                                 }
+  }                                 }
+  ```
+
+  You can also still configure loader options as a flat object to make this particular change irrelevant:
+
+  ```js
+  module.exports = {
+    webpack: {
+      rules: {
+        css: {
+          modules: /* ... */
+        }
+      }
+    }
+  }
+  ```
+
+- [Configuring PostCSS plugins](https://github.com/insin/nwb/master/webpack2/docs/Configuration.md#postcss-arrayplugin) with an Object is now deprecated - an Array of plugins should now be configured, and will only be used for your app's own stylesheets:
+
+  ```js
+  // < v0.15
+  module.exports = {                     module.exports = {
+    webpack: {                             webpack: {
+      postcss: {                     =>      postcss: [
+        defaults: [                            require('precss')(),
+          require('precss')(),                 require('autoprefixer')()
+          require('autoprefixer')()          ]
+        ],                                 }
+        vendor: [                    =>    // no longer supported
+          /* ... */                      }
+        ]
+      }
+    }
+  }
   ```
 
 **Removed:**
@@ -30,6 +107,7 @@
 - object-assign: v4.1.0 → [v4.1.1](https://github.com/postcss/postcss-loader/blob/master/CHANGELOG.md#122)
 - ora: v0.4.1 → v1.0.0
 - postcss-loader: v1.2.1 → [v1.2.2](https://github.com/postcss/postcss-loader/blob/master/CHANGELOG.md#122)
+- webpack: v1.14.0 → [v2.2.0](https://medium.com/webpack/webpack-2-2-the-final-release-76c3d43bf144#.dvk6bodek)
 - webpack-merge: v2.3.1 → [v2.4.0](https://github.com/survivejs/webpack-merge/blob/master/CHANGELOG.md#240--2017-01-12)
 
 **Internal:**
@@ -306,8 +384,6 @@
 
 **`nwb.config.js` Config Format Changes:**
 
-> For deprecations, nwb v0.12 will support the old format, display warning messages about the changes required, and adapt the old format for use in the current build where possible.
-
 - **`build` config is deprecated in favour of new [`npm` config](https://github.com/insin/nwb/blob/0.12/docs/Configuration.md#npm-object)**, which is a slightly different format.
 
   nwb will adapt any `build` config it finds for the current build and log out the equivalent `npm` config.
@@ -565,8 +641,6 @@
 
 **`nwb.config.js` Config Format Changes:**
 
-> For deprecations, nwb v0.11 will support the old format and display warning messages about the changes required.
-
 * `webpack.plugins` is deprecated - config under `webpack.plugins` should be moved up into `webpack` instead. Having certain config under a `plugins` prop was an implementation detail which wasn't relevant to end-users [[#113](https://github.com/insin/nwb/issues/113)]
 
   ```js
@@ -767,8 +841,6 @@
   If you were configuring automatic npm installation using a `loaders.install.query.cli` config object, this should be moved to `webpack.plugins.install` instead.
 
 **`nwb.config.js` Config Format Changes:**
-
-> nwb v0.8 will support the old format and display warning messages about the changes required before upgrading to nwb v0.9.
 
 * React component and vanilla JS module npm build configuration must now be specificed as a `build` object:
 

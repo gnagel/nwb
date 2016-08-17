@@ -2,7 +2,7 @@ import expect from 'expect'
 import webpack from 'webpack'
 
 import {ConfigValidationError} from '../src/errors'
-import getUserConfig, {prepareWebpackLoaderConfig, processUserConfig} from '../src/getUserConfig'
+import getUserConfig, {prepareWebpackRuleConfig, processUserConfig} from '../src/getUserConfig'
 
 describe('getUserConfig()', () => {
   it("throws an error when a required config file can't be found", () => {
@@ -74,6 +74,12 @@ describe('processUserConfig()', () => {
     it('webpack.copy.options is not an object', () => {
       check({webpack: {copy: {options: []}}}, 'webpack.copy.options', /Must be/)
     })
+    it('webpack.rules is not an object', () => {
+      check({webpack: {rules: []}}, 'webpack.rules', /Must be/)
+    })
+    it('webpack.postcss is not an array', () => {
+      check({webpack: {postcss: /test/}}, 'webpack.postcss', /Must be/)
+    })
   })
 
   describe('convenience shorthand', () => {
@@ -84,10 +90,6 @@ describe('processUserConfig()', () => {
     it('allows webpack.autoprefixer to be a browser string', () => {
       let config = process({webpack: {autoprefixer: 'test'}})
       expect(config.webpack.autoprefixer).toEqual({browsers: 'test'})
-    })
-    it('allows webpack.postcss to be an array', () => {
-      let config = process({webpack: {postcss: ['test']}})
-      expect(config.webpack.postcss).toEqual({defaults: ['test']})
     })
     it('allows webpack.copy to be an array', () => {
       let config = process({webpack: {copy: ['test']}})
@@ -138,52 +140,131 @@ describe('processUserConfig()', () => {
     })
     expect(config.karma).toEqual({excludeFromCoverage: 'test'})
   })
+  it('converts webpack.loaders to webpack.rules for v0.15 back-compat', () => {
+    let config = processUserConfig({
+      userConfig: {
+        webpack: {
+          loaders: {
+            fake: {}
+          }
+        }
+      }
+    })
+    expect(config.webpack).toEqual({rules: {fake: {}}})
+  })
+  it('converts a loader query object to an option object for v0.15 back-compat', () => {
+    let config = processUserConfig({
+      userConfig: {
+        webpack: {
+          rules: {
+            fake: {
+              query: {a: 1}
+            }
+          }
+        }
+      }
+    })
+    expect(config.webpack.rules).toEqual({fake: {options: {a: 1}}})
+  })
+  it('converts postcss Object config to Array config', () => {
+    let config = processUserConfig({
+      userConfig: {
+        webpack: {
+          postcss: {
+            defaults: [1, 2],
+            vendor: [3, 4]
+          }
+        }
+      }
+    })
+    expect(config.webpack.postcss).toEqual([1, 2])
+  })
+  context('special-casing for loaders used with ExtractTextPlugin, which only supports query', () => {
+    it('copies flat options to a query object', () => {
+      let config = processUserConfig({
+        userConfig: {
+          webpack: {
+            loaders: {
+              css: {
+                modules: 'test'
+              }
+            }
+          }
+        }
+      })
+      expect(config.webpack.rules).toEqual({css: {query: {modules: 'test'}}})
+    })
+    it('copies an options object to a query object', () => {
+      let config = processUserConfig({
+        userConfig: {
+          webpack: {
+            loaders: {
+              css: {
+                options: {modules: 'test'}
+              }
+            }
+          }
+        }
+      })
+      expect(config.webpack.rules).toEqual({css: {query: {modules: 'test'}}})
+    })
+    it('keeps a query object', () => {
+      let config = processUserConfig({
+        userConfig: {
+          webpack: {
+            loaders: {
+              css: {
+                query: {modules: 'test'}
+              }
+            }
+          }
+        }
+      })
+      expect(config.webpack.rules).toEqual({css: {query: {modules: 'test'}}})
+    })
+  })
 })
 
-describe('prepareWebpackLoaderConfig()', () => {
-  it('does nothing if a query object is already present', () => {
+describe('prepareWebpackRuleConfig()', () => {
+  it('does nothing if an options object is already present', () => {
     let config = {
-      css: {
+      fake: {
         test: /test/,
         include: /include/,
         exclude: /exclude/,
-        config: {a: 42},
-        query: {
+        options: {
           a: 42,
         },
         other: true,
       },
     }
-    prepareWebpackLoaderConfig(config)
-    expect(config.css).toEqual({
+    prepareWebpackRuleConfig(config)
+    expect(config.fake).toEqual({
       test: /test/,
       include: /include/,
       exclude: /exclude/,
-      config: {a: 42},
-      query: {
+      options: {
         a: 42,
       },
       other: true,
     })
   })
-  it('moves non-loader props into a query object', () => {
+  it('moves non-loader props into an options object', () => {
     let config = {
-      css: {
+      fake: {
         test: /test/,
         include: /include/,
         exclude: /exclude/,
-        config: {a: 42},
         modules: true,
         localIdentName: 'asdf',
       },
     }
-    prepareWebpackLoaderConfig(config)
-    expect(config.css).toEqual({
+    prepareWebpackRuleConfig(config)
+    expect(config.fake).toEqual({
       test: /test/,
       include: /include/,
       exclude: /exclude/,
-      config: {a: 42},
-      query: {
+      options: {
         modules: true,
         localIdentName: 'asdf',
       },

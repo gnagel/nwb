@@ -4,19 +4,20 @@ import util from 'util'
 import chalk from 'chalk'
 import figures from 'figures'
 import glob from 'glob'
+import resolve from 'resolve'
 import webpack from 'webpack'
 
 import {CONFIG_FILE_NAME, PROJECT_TYPES} from './constants'
 import {COMPAT_CONFIGS} from './createWebpackConfig'
 import debug from './debug'
 import {ConfigValidationError, UserError} from './errors'
-import {deepToString, typeOf} from './utils'
+import {deepToString, joinAnd, typeOf} from './utils'
 
 const DEFAULT_REQUIRED = false
 
 const BABEL_RUNTIME_OPTIONS = ['helpers', 'polyfill']
 
-let s = (n) => n === 1 ? '' : 's'
+let s = (n, w = ',s') => w.split(',')[n === 1 ? 0 : 1]
 
 export class UserConfigReport {
   constructor(configPath) {
@@ -92,22 +93,42 @@ export class UserConfigReport {
 }
 
 /**
- * Move loader query config tweaks into a query object, allowing users to
+ * XXX Identifies rules which need to be treated differently because
+ *     ExtractTextPlugin currently only supports Webpack v1-style query
+ *     configuration.
+ */
+function isExtractTextPluginRule(ruleId) {
+  // XXX Hardcoding style preprocessor plugin ids so user config doesn't need to
+  //     know about plugin config.
+  return (
+    /^(vendor-)?(css|postcss|style|less|sass|stylus)$/.test(ruleId) ||
+    /^(vendor-)?(less|sass|stylus)-(css|postcss|style)$/.test(ruleId)
+  )
+}
+
+/**
+ * Move loader options config into an options object, allowing users to
  * provide a flat config.
  */
-export function prepareWebpackLoaderConfig(loaders) {
-  Object.keys(loaders).forEach(loaderId => {
-    let loader = loaders[loaderId]
-    if (loader.query) return loader
-    let {config, exclude, include, test, ...query} = loader // eslint-disable-line no-unused-vars
-    if (Object.keys(query).length > 0) {
-      loader.query = query
-      Object.keys(query).forEach(prop => delete loader[prop])
+export function prepareWebpackRuleConfig(rules) {
+  Object.keys(rules).forEach(ruleId => {
+    let rule = rules[ruleId]
+    // XXX ExtractTextPlugin only supports query, not options
+    let optionsProp = isExtractTextPluginRule(ruleId) ? 'query' : 'options'
+    if (rule[optionsProp]) return
+    let {exclude, include, test, ...options} = rule // eslint-disable-line no-unused-vars
+    if (Object.keys(options).length > 0) {
+      rule[optionsProp] = options
+      Object.keys(options).forEach(prop => delete rule[prop])
     }
   })
 }
 
+// TODO Remove in a future version
 let warnedAboutKarmaTestDirs = false
+let warnedAboutPostCSSConfig = false
+let warnedAboutWebpackLoaders = false
+let warnedAboutWebpackRuleQuery = false
 
 /**
  * Validate user config and perform any necessary validation and transformation
@@ -160,10 +181,10 @@ export function processUserConfig({
       )
     }
   }
-  if (userConfig.babel.presets && !Array.isArray(userConfig.babel.presets)) {
+  if (userConfig.babel.presets && typeOf(userConfig.babel.presets) !== 'array') {
     report.error('babel.presets', userConfig.babel.presets, `Must be an ${chalk.cyan('Array')}`)
   }
-  if (userConfig.babel.plugins && !Array.isArray(userConfig.babel.plugins)) {
+  if (userConfig.babel.plugins && typeOf(userConfig.babel.plugins) !== 'array') {
     report.error('babel.plugins', userConfig.babel.plugins, `Must be an ${chalk.cyan('Array')}`)
   }
   if ('runtime' in userConfig.babel &&
@@ -191,6 +212,32 @@ export function processUserConfig({
     }
   }
 
+  if ('cherryPick' in userConfig.babel) {
+    let {cherryPick} = userConfig.babel
+    if (typeOf(cherryPick) === 'string') {
+      cherryPick = [cherryPick]
+    }
+    let esModules = []
+    cherryPick.forEach(mod => {
+      try {
+        let pkg = require(resolve.sync(`${mod}/package.json`, {basedir: process.cwd()}))
+        if (pkg.module) {
+          esModules.push(mod)
+        }
+      }
+      catch (e) {
+        // pass
+      }
+    })
+    if (esModules.length > 0) {
+      let n = esModules.length
+      report.hint('babel.cherryPick',
+        `${joinAnd(esModules)} ${s(n, 'has,have')} a ${chalk.cyan('"module"')} entry in ${s(n, 'its,their')} ${chalk.cyan('package.json')}.`,
+        `If you're using ES modules, You Might Not Need ${chalk.green('babel.cherryPick')} for ${s(n, 'this,these')} module${s(n)}, as Webpack 2 can tree shake ES modules.`,
+      )
+    }
+  }
+
   // Karma config
   // TODO Remove in a future version
   if (userConfig.karma.testDir || userConfig.karma.testDirs) {
@@ -199,7 +246,7 @@ export function processUserConfig({
     if (!warnedAboutKarmaTestDirs) {
       report.deprecated(
         `karma.${prop}`,
-        `Deprecated as of nwb v0.15 - this has been renamed to ${chalk.cyan('karma.excludeFromCoverage')}.`
+        `Deprecated as of nwb v0.15 - this has been renamed to ${chalk.green('karma.excludeFromCoverage')}.`
       )
       warnedAboutKarmaTestDirs = true
     }
@@ -285,12 +332,74 @@ export function processUserConfig({
     )
   }
 
-  if (userConfig.webpack.loaders) {
-    prepareWebpackLoaderConfig(userConfig.webpack.loaders)
+  // TODO Remove in a future version - just validate type and monkey patch rule
+  //      config for ExtractTextPlugin (which will hopefull get fixed in the
+  //      meantime).
+  if ('loaders' in userConfig.webpack) {
+    if (!warnedAboutWebpackLoaders) {
+      report.deprecated('webpack.loaders',
+        `Deprecated as of nwb v0.15 - this has been renamed to ${chalk.green('webpack.rules')} to match Webpack 2 config.`
+      )
+      warnedAboutWebpackLoaders = true
+    }
+    userConfig.webpack.rules = userConfig.webpack.loaders
+    delete userConfig.webpack.loaders
+  }
+  if ('rules' in userConfig.webpack) {
+    if (typeOf(userConfig.webpack.rules) !== 'object') {
+      report.error(
+        'webpack.rules',
+        `type: ${typeOf(userConfig.webpack.rules)}`,
+        'Must be an Object.'
+      )
+    }
+    else {
+      Object.keys(userConfig.webpack.rules).forEach(ruleId => {
+        let usedWithExtractTextPlugin = isExtractTextPluginRule(ruleId)
+        if (userConfig.webpack.rules[ruleId].query) {
+          if (!warnedAboutWebpackRuleQuery) {
+            report.deprecated('query Object in webpack.rules config',
+              `Deprecated as of nwb v0.15 - an ${chalk.green('options')} Object should now be used to specify rule options, to match Webpack 2 config.`
+            )
+            warnedAboutWebpackRuleQuery = true
+          }
+          // XXX We still want to warn users to upgrade to the new config
+          //     format for future compatibility, but don't actually move query
+          //     config for rules used with ExtractTextPlugin, as it doesn't
+          //     support Webpack 2-style options yet.
+          if (!usedWithExtractTextPlugin) {
+            userConfig.webpack.rules[ruleId].options = userConfig.webpack.rules[ruleId].query
+            delete userConfig.webpack.rules[ruleId].query
+          }
+        }
+        // XXX Move options specified as an object to old query config for rules
+        //     which are used with ExtractTextPlugin.
+        else if (usedWithExtractTextPlugin && userConfig.webpack.rules[ruleId].options) {
+          userConfig.webpack.rules[ruleId].query = userConfig.webpack.rules[ruleId].options
+          delete userConfig.webpack.rules[ruleId].options
+        }
+      })
+      prepareWebpackRuleConfig(userConfig.webpack.rules)
+    }
   }
 
-  if (typeOf(userConfig.webpack.postcss) === 'array') {
-    userConfig.webpack.postcss = {defaults: userConfig.webpack.postcss}
+  // TODO Remove in a future version
+  if ('postcss' in userConfig.webpack && typeOf(userConfig.webpack.postcss) === 'object') {
+    let messages = [`Configuring PostCSS plugins with an Object is deprecated as of nwb v0.15.`]
+    if (typeOf(userConfig.webpack.postcss.defaults) === 'array') {
+      userConfig.webpack.postcss = userConfig.webpack.postcss.defaults
+      messages.push(`nwb will use ${chalk.yellow('webpack.postcss.defaults')} as ${chalk.green('webpack.postcss')} config during a build.`)
+    }
+    else {
+      messages.push(`nwb will use its default PostCSS config during a build.`)
+    }
+    if (!warnedAboutPostCSSConfig) {
+      report.deprecated('webpack.postcss', ...messages)
+      warnedAboutPostCSSConfig = true
+    }
+  }
+  else if ('postcss' in userConfig.webpack && typeOf(userConfig.webpack.postcss) !== 'array') {
+    report.error('webpack.postcss', `type: ${typeOf(userConfig.webpack.postcss)}`, 'Must be an Array.')
   }
 
   if (userConfig.webpack.extra) {

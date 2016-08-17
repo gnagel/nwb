@@ -9,7 +9,7 @@ export default function createBabelConfig(buildConfig = {}, userConfig = {}) {
   let {
     commonJSInterop,
     env,
-    modules = 'commonjs',
+    modules = false,
     plugins: buildPlugins = [],
     presets: buildPresets,
     setRuntimePath,
@@ -114,8 +114,8 @@ export default function createBabelConfig(buildConfig = {}, userConfig = {}) {
     plugins.push([require.resolve('babel-plugin-transform-runtime'), runtimeTransformOptions])
   }
 
-  // Provide CommonJS interop so require() in code-splitting require.ensure()
-  // blocks doesn't need a .default tacked on the end.
+  // Provide CommonJS interop so users don't have to tag a .default onto their
+  // imports if they're using vanilla Node.js require().
   if (commonJSInterop) {
     plugins.push(require.resolve('babel-plugin-add-module-exports'))
   }
